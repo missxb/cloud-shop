@@ -1,0 +1,73 @@
+groups:
+- name: ecommerce-alerts
+  rules:
+
+  # Pod 重启次数过多
+  - alert: PodCrashLooping
+    expr: rate(kube_pod_container_status_restarts_total{namespace="ecommerce"}[10m]) > 0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Pod {{ $labels.pod }} 反复重启"
+      description: "Pod {{ $labels.pod }} 在最近10分钟内发生了{{ $value }}次重启，请检查"
+
+  # CPU使用率过高
+  - alert: HighCPUUsage
+    expr: (sum(rate(container_cpu_usage_seconds_total{namespace="ecommerce"}[5m])) by (pod) / container_spec_cpu_quota{namespace="ecommerce"} * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Pod {{ $labels.pod }} CPU使用率过高"
+      description: "CPU使用率超过80%，当前值: {{ $value }}%"
+
+  # 内存使用率过高
+  - alert: HighMemoryUsage
+    expr: (container_memory_working_set_bytes{namespace="ecommerce"} / container_spec_memory_limit_bytes{namespace="ecommerce"} * 100) > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Pod {{ $labels.pod }} 内存使用率过高"
+      description: "内存使用率超过85%，当前值: {{ $value }}%"
+
+  # 节点不可用
+  - alert: NodeNotReady
+    expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "节点 {{ $labels.node }} 不可用"
+      description: "Kubernetes节点 {{ $labels.node }} 已经5分钟没有就绪"
+
+  # API错误率过高
+  - alert: HighErrorRate
+    expr: (rate(http_requests_total{code=~"5..",namespace="ecommerce"}[5m]) / rate(http_requests_total{namespace="ecommerce"}[5m])) > 0.05
+    for: 2m
+    labels:
+      severity: high
+    annotations:
+      summary: "服务 {{ $labels.job }} 错误率过高"
+      description: "5xx错误率超过5%，当前值: {{ $value }}"
+
+  # 数据库连接数过多
+  - alert: TooManyConnections
+    expr: mysql_global_status_threads_connected{instance="mysql"} > 100
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "MySQL连接数过多"
+      description: "当前连接数: {{ $value }}，超过阈值100"
+
+  # RabbitMQ消息堆积
+  - alert: RabbitMQQueueDepth
+    expr: rabbitmq_queue_messages_ready >= 1000
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "RabbitMQ队列 {{ $labels.queue }} 消息堆积"
+      description: "队列中已有 {{ $value }} 条消息等待处理"

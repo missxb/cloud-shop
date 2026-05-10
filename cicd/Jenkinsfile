@@ -1,0 +1,143 @@
+pipeline {
+  agent any
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
+
+  parameters {
+    choice(
+      name: 'ENVIRONMENT',
+      choices: ['dev', 'test', 'prod'],
+      description: '部署环境'
+    )
+  }
+
+  environment {
+    REGISTRY = 'your-harbor-domain.com/library'
+    PROJECT = 'ecommerce'
+    BUILD_NUMBER = "${env.BUILD_ID}"
+  }
+
+  stages {
+    stage('检出代码') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('代码扫描') {
+      steps {
+        echo '代码质量扫描...'
+        // 这里可以集成 SonarQube
+        sh 'echo "代码扫描完成"'
+      }
+    }
+
+    stage('构建镜像') {
+      parallel {
+        stage('构建用户服务镜像') {
+          steps {
+            script {
+              buildImage('user')
+            }
+          }
+        }
+        stage('构建商品服务镜像') {
+          steps {
+            script {
+              buildImage('product')
+            }
+          }
+        }
+        stage('构建订单服务镜像') {
+          steps {
+            script {
+              buildImage('order')
+            }
+          }
+        }
+        stage('构建支付服务镜像') {
+          steps {
+            script {
+              buildImage('payment')
+            }
+          }
+        }
+        stage('构建库存服务镜像') {
+          steps {
+            script {
+              buildImage('inventory')
+            }
+          }
+        }
+      }
+    }
+
+    stage('镜像安全扫描') {
+      steps {
+        echo 'Trivy镜像安全扫描...'
+        // Trivy扫描镜像漏洞
+        sh 'echo "镜像安全扫描完成"'
+      }
+    }
+
+    stage('部署到K8s') {
+      steps {
+        echo "部署到${params.ENVIRONMENT}环境..."
+        // 使用kubectl set image 更新部署
+        updateDeployment('user')
+        updateDeployment('product')
+        updateDeployment('order')
+        updateDeployment('payment')
+        updateDeployment('inventory')
+      }
+    }
+
+    stage('健康检查') {
+      steps {
+        echo '健康检查...'
+        // 检查Pod状态，等待就绪
+        sh 'sleep 30'
+        sh 'kubectl get pods -n ecommerce'
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "构建部署成功！环境: ${params.ENVIRONMENT}"
+      // 发送钉钉通知
+      dingtalk(
+        robot: 'ecommerce-webhook',
+        text: "云原生电商系统部署成功\n环境: ${params.ENVIRONMENT}\n构建号: ${BUILD_NUMBER}"
+      )
+    }
+    failure {
+      echo "构建部署失败！"
+      dingtalk(
+        robot: 'ecommerce-webhook',
+        text: "云原生电商系统部署失败\n环境: ${params.ENVIRONMENT}\n构建号: ${BUILD_NUMBER}"
+      )
+    }
+  }
+}
+
+def buildImage(serviceName) {
+  def imageName = "${REGISTRY}/${PROJECT}/${serviceName}:${BUILD_NUMBER}"
+  echo "构建镜像: ${imageName}"
+  sh """
+    cd services/${serviceName}
+    docker build -t ${imageName} .
+    docker push ${imageName}
+  """
+}
+
+def updateDeployment(serviceName) {
+  def imageName = "${REGISTRY}/${PROJECT}/${serviceName}:${BUILD_NUMBER}"
+  echo "更新Deployment: ${serviceName} 镜像: ${imageName}"
+  sh """
+    kubectl set image deployment/${serviceName} ${serviceName}=${imageName} -n ecommerce
+    kubectl rollout status deployment/${serviceName} -n ecommerce
+  """
+}

@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # MySQL数据库
+  mysql:
+    image: mysql:8.0
+    container_name: ecommerce-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: ecommerce
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - ecommerce
+    restart: always
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - ecommerce
+    restart: always
+
+  # RabbitMQ消息队列
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ecommerce-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - ecommerce
+    restart: always
+
+  # 用户服务
+  user:
+    build: ./services/user
+    container_name: ecommerce-user
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql
+    networks:
+      - ecommerce
+    restart: always
+
+  # 商品服务
+  product:
+    build: ./services/product
+    container_name: ecommerce-product
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mysql
+    networks:
+      - ecommerce
+    restart: always
+
+  # 订单服务
+  order:
+    build: ./services/order
+    container_name: ecommerce-order
+    ports:
+      - "8082:8082"
+    depends_on:
+      - mysql
+      - rabbitmq
+    networks:
+      - ecommerce
+    restart: always
+
+  # 支付服务
+  payment:
+    build: ./services/payment
+    container_name: ecommerce-payment
+    ports:
+      - "8083:8083"
+    depends_on:
+      - mysql
+      - rabbitmq
+    networks:
+      - ecommerce
+    restart: always
+
+  # 库存服务
+  inventory:
+    build: ./services/inventory
+    container_name: ecommerce-inventory
+    ports:
+      - "8084:8084"
+    depends_on:
+      - mysql
+    networks:
+      - ecommerce
+    restart: always
+
+volumes:
+  mysql-data:
+
+networks:
+  ecommerce:
+    driver: bridge

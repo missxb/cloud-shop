@@ -1,0 +1,105 @@
+# 网络策略 - 最小权限原则
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  policyTypes:
+  - Ingress
+---
+# 只允许API Gateway访问后端服务，禁止直接访问Pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress: []
+---
+# MySQL只允许后端服务访问，不允许外部访问
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mysql
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: user
+    - podSelector:
+        matchLabels:
+          app: product
+    - podSelector:
+        matchLabels:
+          app: order
+    - podSelector:
+        matchLabels:
+          app: payment
+    - podSelector:
+        matchLabels:
+          app: inventory
+    ports:
+    - protocol: TCP
+      port: 3306
+---
+# Redis只允许后端服务访问
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: user
+    - podSelector:
+        matchLabels:
+          app: product
+    - podSelector:
+        matchLabels:
+          app: order
+  ports:
+  - protocol: TCP
+    port: 6379
+---
+# RabbitMQ只允许后端服务访问
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rabbitmq
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: order
+    - podSelector:
+        matchLabels:
+          app: payment
+  ports:
+  - protocol: TCP
+    port: 5672
