@@ -10,6 +10,37 @@
 
 ## 🏗️ 生产级架构总览
 
+### Kubernetes控制平面高可用架构
+
+```mermaid
+flowchart TD
+    subgraph "3Master高可用控制平面"
+        M1[Master 1<br/>kube-apiserver<br/>etcd] 
+        M2[Master 2<br/>kube-apiserver<br/>etcd]
+        M3[Master 3<br/>kube-apiserver<br/>etcd]
+        
+        K1[keepalived]<br/>M1
+        K2[keepalived]<br/>M2
+        K3[keepalived]<br/>M3
+        
+        M1 --- K1
+        M2 --- K2
+        M3 --- K3
+        
+        K1 & K2 & K3 --> VIP[VIP: 192.168.1.10<br/>统一接入地址]
+    end
+    
+    subgraph "3Worker工作节点"
+        W1[Worker 1<br/>业务微服务]
+        W2[Worker 2<br/>数据库 + 消息队列]
+        W3[Worker 3<br/>监控 + CI/CD]
+    end
+    
+    VIP --> W1 & W2 & W3
+```
+
+### 完整生产级应用架构
+
 ```mermaid
 flowchart TD
     subgraph 用户层
@@ -24,92 +55,70 @@ flowchart TD
         F --> G[SLB负载均衡]
     end
     
-    subgraph 接入层
-        G --> H[Nginx集群]
-        H --> I[API网关]
-    end
-    
-    subgraph 服务层
-        I --> J[商城首页服务]
-        I --> K[商品详情服务]
-        I --> L[购物车服务]
-        I --> M[订单服务]
-        I --> N[支付服务]
-        I --> O[会员中心]
-        I --> P[搜索服务]
+    subgraph "Kubernetes集群 (3Master+3Worker)"
+        G --> H[Ingress Nginx]
+        H --> I[Istio服务网格]
         
-        subgraph 服务网格
-            J --> Q[Istio]
-            K --> Q
-            L --> Q
-            M --> Q
-            N --> Q
-            O --> Q
-            P --> Q
+        subgraph 微服务层
+            I --> J[用户服务]
+            I --> K[商品服务]
+            I --> L[订单服务]
+            I --> M[支付服务]
+            I --> N[库存服务]
+        end
+        
+        subgraph 中间件层
+            J & K & L & M & N --> O[Redis哨兵集群]
+            J & K & L & M & N --> P[RabbitMQ镜像队列集群]
+            J & K & L & M & N --> Q[MySQL主从集群]
+        end
+        
+        subgraph 可观测性层
+            R[Prometheus]
+            S[Grafana]
+            T[Alertmanager]
+            U[ELK日志]
+            V[Jaeger链路追踪]
         end
     end
-    
-    subgraph 中间件层
-        Q --> R[Redis哨兵集群]
-        Q --> S[RabbitMQ镜像队列]
-        Q --> T[Elasticsearch集群]
-        Q --> U[Seata分布式事务]
-    end
-    
-    subgraph 数据层
-        Q --> V[MySQL主从集群]
-        Q --> W[PolarDB只读实例]
-        Q --> X[OSS对象存储]
-        Q --> Y[ClickHouse分析库]
-    end
-    
-    subgraph 运维层
-        Z[Kubernetes集群] --> Q
-        AA[ArgoCD] --> Z
-        AB[Prometheus+Grafana] --> Z
-        AC[ELK日志平台] --> Z
-        AD[Jaeger链路追踪] --> Z
-    end
-    
-    subgraph 安全层
-        AE[云防火墙] --> Z
-        AF[容器安全] --> Z
-        AG[KMS加密] --> V
-        AG --> X
-        AH[漏洞扫描] --> J
-    end
+end
 ```
 
 ## 📦 基础设施规格 (阿里云)
 
-### 1. Kubernetes集群 (生产级高可用)
-| 节点类型 | 数量 | 实例规格 | 配置 | 用途 |
-|---------|------|----------|------|------|
-| Master | 3 | ecs.g7.2xlarge | 8核16G 100G云盘 | 集群控制平面 |
-| Worker | 6 | ecs.g7.4xlarge | 16核32G 200G云盘 | 业务服务部署 |
-| Etcd | 3 | ecs.g7.large | 4核8G 200G云盘 | 分布式存储 |
+### 1. Kubernetes集群 (标准生产级3Master + 3Worker高可用)
+| 节点类型 | 数量 | 实例规格 | CPU | 内存 | 磁盘 | 用途 |
+|---------|------|----------|-----|------|------|------|
+| **Master节点** | 3 | ecs.g7.large | 2核 | 4GB | 100G云盘 | 集群控制平面（kube-apiserver/kube-controller/kube-scheduler） |
+| **Worker节点** | 3 | ecs.g7.xlarge | 4核 | 8GB | 200G云盘 | 业务服务、数据库、中间件、监控 |
+| **总计** | **6台** | - | **18核** | **36GB** | **900GB** | |
+
+> ✅ **标准生产级高可用：**
+> - 3个Master节点组成高可用控制平面
+> - 3个etcd节点（与Master同节点部署）组成etcd集群
+> - keepalived + VIP提供统一接入地址，自动故障转移
+> - 3个Worker节点运行所有业务服务，容忍任意节点故障
 
 ### 2. 数据库层
-| 服务类型 | 实例规格 | 配置 | 用途 |
-|---------|----------|------|------|
-| MySQL主库 | rds.g7.2xlarge | 8核32G 1000G云盘 | 核心交易数据 |
-| MySQL从库 | rds.g7.2xlarge | 8核32G 500G云盘 | 读请求分流 |
-| PolarDB只读 | polardb.mysql.x8.large | 8核32G | 数据分析 |
-| ClickHouse | clickhouse.g7.4xlarge | 16核64G 2000G云盘 | 日志和指标存储 |
+| 服务类型 | 实例规格 | CPU/内存 | 磁盘 | 用途 |
+|---------|----------|---------|------|------|
+| MySQL主库 | rds.mysql.x8.large | 8核32G | 1000G云盘 | 核心交易数据 |
+| MySQL从库 | rds.mysql.x8.large | 8核32G | 500G云盘 | 读请求分流 |
+| ClickHouse | clickhouse.g7.4xlarge | 16核64G | 2000G云盘 | 日志和指标存储 |
 
 ### 3. 中间件层
-| 服务类型 | 实例规格 | 配置 | 用途 |
-|---------|----------|------|------|
-| Redis哨兵 | ecs.g7.2xlarge ×3 | 8核16G 200G云盘 | 缓存服务 |
-| RabbitMQ | ecs.g7.2xlarge ×3 | 8核16G 200G云盘 | 消息队列 |
-| Elasticsearch | elasticsearch.g7.4xlarge ×3 | 16核64G 1000G云盘 | 搜索和日志 |
+| 服务类型 | 节点数量 | CPU/内存 | 磁盘 | 用途 |
+|---------|----------|---------|------|------|
+| Redis哨兵 | 3节点 | 2核4G | 100G云盘 | 缓存服务 |
+| RabbitMQ | 3节点 | 4核8G | 200G云盘 | 消息队列（镜像队列集群） |
+| Elasticsearch | 3节点 | 8核16G | 1000G云盘 | 搜索和日志 |
 
 ### 4. 网络层
-| 服务类型 | 实例规格 | 配置 | 用途 |
-|---------|----------|------|------|
-| SLB负载均衡 | slb.s3.small ×2 | 双可用区 | 流量分发 |
-| WAF防火墙 | waf.s1.small | 高级版 | Web应用防护 |
-| DDoS高防 | ddos高防IP | 300G防护 | 大流量攻击防护 |
+| 服务类型 | 规格 | 用途 |
+|---------|------|------|
+| SLB负载均衡 | 1台SLB | 流量分发到Ingress |
+| WAF防火墙 | 高级版 | Web应用防护 |
+| DDoS高防 | 300G防护 | 大流量攻击防护 |
 
 ## 🔧 核心技术栈
 
@@ -203,18 +212,24 @@ flowchart TD
 - 包括节点故障、网络分区、数据损坏等场景
 - 验证恢复流程和时间
 
-## 💰 成本评估 (按5小时计算)
-| 服务类型 | 规格 | 数量 | 按需单价 | 5小时费用 |
-|---------|------|------|----------|----------|
-| ECS实例 | g7.2xlarge | 9 | 4.2元/小时 | 189元 |
-| RDS数据库 | rds.g7.2xlarge | 2 | 3.8元/小时 | 38元 |
-| PolarDB | polardb.mysql.x8.large | 1 | 2.5元/小时 | 12.5元 |
-| SLB负载均衡 | slb.s3.small | 2 | 0.15元/小时 | 1.5元 |
-| WAF防火墙 | waf.s1.small | 1 | 0.3元/小时 | 1.5元 |
-| DDoS高防 | 300G防护 | 1 | 8元/小时 | 40元 |
-| **总计** | | | | **282.5元** |
+## 💰 成本评估 (阿里云按需付费，体验5小时)
+| 节点类型 | 数量 | 实例规格 | CPU/内存 | 按需单价 | 5小时费用 |
+|---------|------|----------|---------|----------|----------|
+| Master | 3 | ecs.t6-l | 2核4G | 0.65元/小时 | 9.75元 |
+| Worker | 3 | ecs.g6-xlarge | 4核8G | 1.3元/小时 | 19.5元 |
+| RDS主库 | 1 | rds.mysql.x8.large | 8核32G | 2.5元/小时 | 12.5元 |
+| RDS从库 | 1 | rds.mysql.x8.large | 8核32G | 2.5元/小时 | 12.5元 |
+| SLB负载均衡 | 1 | slb.s3.small | - | 0.15元/小时 | 0.75元 |
+| WAF防火墙 | 1 | waf.s1.small | - | 0.3元/小时 | 1.5元 |
+| **总计** | 8台服务 | - | 18核36GB | - | **56.5元** |
 
-> 注：实际使用可能因阿里云优惠政策有所不同，270元预算基本覆盖核心服务
+> 💡 **优势：**
+> - 标准生产级3Master + 3Worker高可用架构
+> - 所有核心组件都是高可用设计
+> - 体验5小时仅需约60元，成本可控
+> - 用完即释放，不产生额外费用
+
+**如果您资源有限，可以使用：1Master + 2Worker学习配置，总成本约25元/5小时**
 
 ## 📋 交付物清单
 
@@ -228,6 +243,6 @@ flowchart TD
 
 ---
 
-**版本**：v1.0  
+**版本**：v2.0（标准生产级3Master+3Worker）  
 **日期**：2026-05-10  
 **作者**：小白老师（资深运维工程师）
